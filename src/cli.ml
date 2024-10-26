@@ -2,7 +2,7 @@ open Cmdliner
 
 let filename =
   let docv = "file" in
-  let doc = Printf.sprintf "Input .cmt file." in
+  let doc = "Input .cmt file." in
   Arg.(required & pos 0 (some file) None & info [] ~docv ~doc)
 
 let attributes =
