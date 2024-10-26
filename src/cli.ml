@@ -32,5 +32,3 @@ let () =
   Cmd.v info main
   |> Cmd.eval
   |> exit
-let () =
-  Fmt.pr "ici@."
