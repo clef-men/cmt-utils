@@ -6,10 +6,10 @@ type arguments =
 
 exception Error of unit Cmdliner.Term.ret
 
-let error ?(usage = true) fmt =
+let error ?(usage = true) =
   Fmt.kstr (fun msg ->
     raise @@ Error (`Error (usage, msg))
-  ) ("Error: " ^^ fmt ^^ ".")
+  )
 
 let main args =
   match Cmt_format.read_cmt args.filename with
