@@ -1,3 +1,7 @@
+## Synopsis
+
+![](doc/showcase.png)
+
 ## Building
 
 ```
