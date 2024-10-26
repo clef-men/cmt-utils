@@ -1,0 +1,9 @@
+(executable
+  (name cli)
+  (public_name cmt-utils)
+  (libraries
+    ocaml-compiler-libs.common
+    fmt
+    cmdliner
+  )
+)
