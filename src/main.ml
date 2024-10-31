@@ -2,6 +2,7 @@ type arguments =
   { filename: string;
     attributes: bool;
     locations: bool;
+    indices: bool;
   }
 
 exception Error of unit Cmdliner.Term.ret
@@ -21,9 +22,11 @@ let main args =
   | cmt ->
       match cmt.cmt_annots with
       | Implementation str ->
+          Load_path.(init ~auto_include:no_auto_include ~visible:cmt.cmt_loadpath.visible ~hidden:cmt.cmt_loadpath.hidden) ;
           let config : Dump.config =
             { config_attributes= args.attributes;
               config_locations= args.locations;
+              config_indices= args.indices;
             }
           in
           Fmt.pr "%a@." (Dump.structure ~config) str

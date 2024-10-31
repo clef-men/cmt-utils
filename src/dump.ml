@@ -1,6 +1,14 @@
 type config =
   { config_attributes: bool;
     config_locations: bool;
+    config_indices: bool;
+  }
+
+type context =
+  { context_attributes: bool;
+    context_locations: bool;
+    context_indices: bool;
+    context_env: Env.t;
   }
 
 type case_kind =
@@ -89,8 +97,8 @@ let subexec' pp ppf xs =
   |> printables pp
   |> subexec ppf
 
-let location ~config ppf (loc : Location.t) =
-  if config.config_locations then
+let location ~ctx ppf (loc : Location.t) =
+  if ctx.context_locations then
     let start = loc.loc_start in
     let end_ = loc.loc_end in
     Fmt.pf ppf " <%i,%i-%i,%i>"
@@ -101,34 +109,40 @@ let location ~config ppf (loc : Location.t) =
 
 let attribute ppf (attr : Parsetree.attribute) =
   Fmt.string ppf attr.attr_name.txt
-let attributes ~config ppf attrs =
-  if config.config_attributes && attrs <> [] then
+let attributes ~ctx ppf attrs =
+  if ctx.context_attributes && attrs <> [] then
     Fmt.pf ppf " [%a]"
       Fmt.(list ~sep:(const char ',') attribute) attrs
 
-let ident =
-  Fmt.styled (`Fg Color.ident) Ident.print
+let ident ~ctx kind ppf id =
+  Ident.print ppf id ;
+  if ctx.context_indices then
+    Fmt.(option @@ fun ppf -> pf ppf "#%i") ppf (Env.find_index kind id ctx.context_env)
+let ident ~ctx kind =
+  Fmt.styled (`Fg Color.ident) (ident ~ctx kind)
 
 let longident =
   Fmt.styled (`Fg Color.longident) Pprintast.longident
 
-let rec path ppf (p : Path.t) =
+let rec path ~ctx kind ppf (p : Path.t) =
   match p with
   | Pident id ->
-      ident ppf id
+      Fmt.pf ppf "%a"
+        (ident ~ctx kind) id
   | Pdot (p, s)
   | Pextra_ty (p, Pcstr_ty s) ->
       Fmt.pf ppf "%a.%s"
-        path p
+        (path ~ctx kind) p
         s
   | Papply (p1, p2) ->
       Fmt.pf ppf "%a(%a)"
-        path p1
-        path p2
+        (path ~ctx kind) p1
+        (path ~ctx kind) p2
   | Pextra_ty (p, Pext_ty) ->
-      path ppf p
-let path =
-  Fmt.styled (`Fg Color.path) path
+      Fmt.pf ppf "%a"
+        (path ~ctx kind) p
+let path ~ctx kind =
+  Fmt.styled (`Fg Color.path) (path ~ctx kind)
 
 let constant ppf (const : Asttypes.constant) =
   match const with
@@ -260,58 +274,58 @@ let pattern_kind (type k) (pat : k Typedtree.general_pattern) =
       "Tpat_exception"
   | Tpat_or _ ->
       "Tpat_or"
-let rec pattern' : type k. config:_ -> _ -> k Typedtree.general_pattern -> _ = fun ~config ppf pat ->
+let rec pattern' : type k. ctx:_ -> _ -> k Typedtree.general_pattern -> _ = fun ~ctx ppf pat ->
   match pat.pat_desc with
   | Tpat_any ->
       []
   | Tpat_var (id, _, _) ->
       Fmt.pf ppf " id:%a"
-        ident id ;
+        (ident ~ctx IdentValue) id ;
       []
   | Tpat_alias (pat, id, _, _) ->
       Fmt.pf ppf " id%a"
-        ident id ;
-      printables (pattern ~config) [pat]
+        (ident ~ctx IdentValue) id ;
+      printables (pattern ~ctx) [pat]
   | Tpat_constant const ->
       Fmt.pf ppf " %a"
         constant const ;
       []
   | Tpat_tuple pats ->
-      printables (pattern ~config) pats
+      printables (pattern ~ctx) pats
   | Tpat_construct (lid, _, pats, _) ->
       Fmt.pf ppf " lid:%a"
         longident lid.txt ;
-      printables (pattern ~config) pats
+      printables (pattern ~ctx) pats
   | Tpat_variant (lbl, pat, _) ->
       Fmt.pf ppf " %s"
         lbl ;
-      printables (pattern ~config) (Option.to_list pat)
+      printables (pattern ~ctx) (Option.to_list pat)
   | Tpat_record (rcd, closed) ->
       Fmt.pf ppf " %a"
         closed_flag closed ;
-      let field ~config ppf (lid, _, pat) =
+      let field ~ctx ppf (lid, _, pat) =
         Fmt.pf ppf "Tpat_record-field lid:%a%a"
           longident lid.Location.txt
-          (subexec' (pattern ~config)) [pat]
+          (subexec' (pattern ~ctx)) [pat]
       in
-      printables (field ~config) rcd
+      printables (field ~ctx) rcd
   | Tpat_array pats ->
-      printables (pattern ~config) pats
+      printables (pattern ~ctx) pats
   | Tpat_lazy pat ->
-      printables (pattern ~config) [pat]
+      printables (pattern ~ctx) [pat]
   | Tpat_value pat ->
-      printables (pattern ~config) [(pat :> Typedtree.(value general_pattern))]
+      printables (pattern ~ctx) [(pat :> Typedtree.(value general_pattern))]
   | Tpat_exception pat ->
-      printables (pattern ~config) [pat]
+      printables (pattern ~ctx) [pat]
   | Tpat_or (pat1, pat2, _) ->
-      printables (pattern ~config) [pat1; pat2]
-and pattern : type k. config:_ -> _ -> k Typedtree.general_pattern -> _ = fun ~config ppf pat ->
+      printables (pattern ~ctx) [pat1; pat2]
+and pattern : type k. ctx:_ -> _ -> k Typedtree.general_pattern -> _ = fun ~ctx ppf pat ->
   Fmt.pf ppf "%a"
     Fmt.(styled (`Fg Color.pattern) string) (pattern_kind pat) ;
-  let subs = pattern' ~config ppf pat in
+  let subs = pattern' ~ctx ppf pat in
   Fmt.pf ppf "%a%a"
-    (attributes ~config) pat.pat_attributes
-    (location ~config) pat.pat_loc ;
+    (attributes ~ctx) pat.pat_attributes
+    (location ~ctx) pat.pat_loc ;
   subexec ppf subs
 
 let expression_kind (expr : Typedtree.expression) =
@@ -384,11 +398,11 @@ let expression_kind (expr : Typedtree.expression) =
       "Texp_extension_constructor"
   | Texp_open _ ->
       "Texp_open"
-let rec expression' ~config ppf (expr : Typedtree.expression) =
+let rec expression' ~ctx ppf (expr : Typedtree.expression) =
   match expr.exp_desc with
   | Texp_ident (p, lid, _) ->
       Fmt.pf ppf " path:%a lid:%a"
-        path p
+        (path ~ctx IdentValue) p
         longident lid.txt ;
       []
   | Texp_constant const ->
@@ -398,86 +412,86 @@ let rec expression' ~config ppf (expr : Typedtree.expression) =
   | Texp_let (rec_, bdgs, expr') ->
       Fmt.pf ppf " %a"
         rec_flag rec_ ;
-      printables (value_binding ~config) bdgs @
-      printables (expression ~config) [expr']
+      printables (value_binding ~ctx) bdgs @
+      printables (expression ~ctx) [expr']
   | Texp_function (params, body) ->
-      printables (function_param ~config) params @
-      printables (function_body ~config) [body]
+      printables (function_param ~ctx) params @
+      printables (function_body ~ctx) [body]
   | Texp_apply (expr', args) ->
-      let argument ~config ppf (lbl, expr) =
+      let argument ~ctx ppf (lbl, expr) =
         Fmt.pf ppf "Texp_apply-argument%a%a"
           (arg_label ~space:true) lbl
-          (subexec' (expression ~config)) (Option.to_list expr)
+          (subexec' (expression ~ctx)) (Option.to_list expr)
       in
-      printables (expression ~config) [expr'] @
-      printables (argument ~config) args
+      printables (expression ~ctx) [expr'] @
+      printables (argument ~ctx) args
   | Texp_match (expr', cases1, cases2, p) ->
       Fmt.pf ppf " %a"
         partial p ;
-      printables (expression ~config) [expr'] @
-      printables (case ~config Result) cases1 @
-      printables (case ~config Exception) cases2
+      printables (expression ~ctx) [expr'] @
+      printables (case ~ctx Result) cases1 @
+      printables (case ~ctx Exception) cases2
   | Texp_try (expr', cases1, cases2) ->
-      printables (expression ~config) [expr'] @
-      printables (case ~config Result) cases1 @
-      printables (case ~config Exception) cases2
+      printables (expression ~ctx) [expr'] @
+      printables (case ~ctx Result) cases1 @
+      printables (case ~ctx Exception) cases2
   | Texp_tuple exprs ->
-      printables (expression ~config) exprs
+      printables (expression ~ctx) exprs
   | Texp_construct (lid, _, exprs) ->
       Fmt.pf ppf " lid:%a"
         longident lid.txt ;
-      printables (expression ~config) exprs
+      printables (expression ~ctx) exprs
   | Texp_variant (lbl, expr') ->
       Fmt.pf ppf " %s"
         lbl ;
-      printables (expression ~config) (Option.to_list expr')
+      printables (expression ~ctx) (Option.to_list expr')
   | Texp_record rcd ->
-      let field ~config ppf (_, (lbl : Typedtree.record_label_definition)) =
+      let field ~ctx ppf (_, (lbl : Typedtree.record_label_definition)) =
         match lbl with
         | Kept _ ->
             ()
         | Overridden (lid, expr) ->
             Fmt.pf ppf "Texp_record-field lid:%a%a"
               longident lid.txt
-              (subexec' (expression ~config)) [expr]
+              (subexec' (expression ~ctx)) [expr]
       in
-      printables (field ~config) (Array.to_list rcd.fields) @
-      printables (expression ~config) (Option.to_list rcd.extended_expression)
+      printables (field ~ctx) (Array.to_list rcd.fields) @
+      printables (expression ~ctx) (Option.to_list rcd.extended_expression)
   | Texp_atomic_loc (expr', lid, _) ->
       Fmt.pf ppf " lid:%a"
         longident lid.txt ;
-      printables (expression ~config) [expr']
+      printables (expression ~ctx) [expr']
   | Texp_field (expr', lid, _) ->
       Fmt.pf ppf " lid:%a"
         longident lid.txt ;
-      printables (expression ~config) [expr']
+      printables (expression ~ctx) [expr']
   | Texp_setfield (expr1, lid, _, expr2) ->
       Fmt.pf ppf " lid:%a"
         longident lid.txt ;
-      printables (expression ~config) [expr1; expr2]
+      printables (expression ~ctx) [expr1; expr2]
   | Texp_array exprs ->
-      printables (expression ~config) exprs
+      printables (expression ~ctx) exprs
   | Texp_ifthenelse (expr0, expr1, expr2) ->
-      printables (expression ~config) ([expr0; expr1] @ Option.to_list expr2)
+      printables (expression ~ctx) ([expr0; expr1] @ Option.to_list expr2)
   | Texp_sequence (expr1, expr2) ->
-      printables (expression ~config) [expr1; expr2]
+      printables (expression ~ctx) [expr1; expr2]
   | Texp_while (expr1, expr2) ->
-      printables (expression ~config) [expr1; expr2]
+      printables (expression ~ctx) [expr1; expr2]
   | Texp_for (id, _pat, expr1, expr2, dir, expr3) ->
       Fmt.pf ppf " %a id:%a"
         direction_flag dir
-        ident id ;
-      printables (expression ~config) [expr1; expr2; expr3]
+        (ident ~ctx IdentValue) id ;
+      printables (expression ~ctx) [expr1; expr2; expr3]
   | Texp_assert (expr', _) ->
-      printables (expression ~config) [expr']
+      printables (expression ~ctx) [expr']
   | Texp_lazy expr' ->
-      printables (expression ~config) [expr']
+      printables (expression ~ctx) [expr']
   | Texp_unreachable ->
       []
   | Texp_extension_constructor (lid, p) ->
       Fmt.pf ppf " lid:%a path:%a"
         longident lid.txt
-        path p ;
+        (path ~ctx IdentValue) p ;
       []
   | Texp_send _
   | Texp_new _
@@ -492,71 +506,71 @@ let rec expression' ~config ppf (expr : Typedtree.expression) =
   | Texp_open _ ->
       (* TODO *)
       []
-and expression ~config ppf expr =
+and expression ~ctx ppf expr =
   Fmt.pf ppf "%a"
     Fmt.(styled (`Fg Color.expression) string) (expression_kind expr) ;
-  let subs = expression' ~config ppf expr in
+  let subs = expression' ~ctx ppf expr in
   Fmt.pf ppf "%a%a"
-    (attributes ~config) expr.exp_attributes
-    (location ~config) expr.exp_loc ;
+    (attributes ~ctx) expr.exp_attributes
+    (location ~ctx) expr.exp_loc ;
   subexec ppf subs
 
-and function_param ~config ppf (param : Typedtree.function_param) =
+and function_param ~ctx ppf (param : Typedtree.function_param) =
   Fmt.pf ppf "function_param%a id:%a%a"
     (arg_label ~space:true) param.fp_arg_label
-    ident param.fp_param
-    (location ~config) param.fp_loc ;
+    (ident ~ctx IdentValue) param.fp_param
+    (location ~ctx) param.fp_loc ;
   match param.fp_kind with
   | Tparam_pat pat ->
-      subexec' (pattern ~config) ppf [pat]
+      subexec' (pattern ~ctx) ppf [pat]
   | Tparam_optional_default (pat, expr) ->
-      subexec ppf [printable (pattern ~config) pat; printable (expression ~config) expr]
+      subexec ppf [printable (pattern ~ctx) pat; printable (expression ~ctx) expr]
 
-and function_body ~config ppf (body : Typedtree.function_body) =
+and function_body ~ctx ppf (body : Typedtree.function_body) =
   match body with
   | Tfunction_body expr ->
       Fmt.pf ppf "Tfunction_body%a"
-        (subexec' (expression ~config)) [expr]
+        (subexec' (expression ~ctx)) [expr]
   | Tfunction_cases body ->
       Fmt.pf ppf "Tfunction_cases %a id:%a%a%a%a"
         partial body.partial
-        ident body.param
-        (location ~config) body.loc
-        (attributes ~config) body.attributes
-        (subexec' (case ~config Result)) body.cases
+        (ident ~ctx IdentValue) body.param
+        (location ~ctx) body.loc
+        (attributes ~ctx) body.attributes
+        (subexec' (case ~ctx Result)) body.cases
 
-and case : type k. config:_ -> _ -> _ -> k Typedtree.case -> _ = fun ~config kind ppf cas ->
+and case : type k. ctx:_ -> _ -> _ -> k Typedtree.case -> _ = fun ~ctx kind ppf cas ->
   Fmt.pf ppf "%a-case%s%a%a"
     case_kind kind
     (if cas.c_guard = None then "" else " guarded")
-    Fmt.(option @@ fun ppf -> pf ppf " id:%a" ident) cas.c_cont
-    subexec (printable (pattern ~config) cas.c_lhs :: printables (expression ~config) (Option.to_list cas.c_guard @ [cas.c_rhs]))
+    Fmt.(option @@ fun ppf -> pf ppf " id:%a" (ident ~ctx IdentValue)) cas.c_cont
+    subexec (printable (pattern ~ctx) cas.c_lhs :: printables (expression ~ctx) (Option.to_list cas.c_guard @ [cas.c_rhs]))
 
-and value_binding ~config ppf (bdg : Typedtree.value_binding) =
+and value_binding ~ctx ppf (bdg : Typedtree.value_binding) =
   Fmt.pf ppf "value_binding%a%a%a"
-    (attributes ~config) bdg.vb_attributes
-    (location ~config) bdg.vb_loc
-    subexec [printable (pattern ~config) bdg.vb_pat; printable (expression ~config) bdg.vb_expr]
+    (attributes ~ctx) bdg.vb_attributes
+    (location ~ctx) bdg.vb_loc
+    subexec [printable (pattern ~ctx) bdg.vb_pat; printable (expression ~ctx) bdg.vb_expr]
 
-let constructor_declaration ~config ppf (constr : Typedtree.constructor_declaration) =
+let constructor_declaration ~ctx ppf (constr : Typedtree.constructor_declaration) =
   Fmt.pf ppf "constructor id:%a %s%a%a"
-    ident constr.cd_id
+    (ident ~ctx IdentValue) constr.cd_id
     ( match constr.cd_args with
       | Cstr_tuple _ -> "tuple"
       | Cstr_record _ -> "record"
     )
-    (attributes ~config) constr.cd_attributes
-    (location ~config) constr.cd_loc
+    (attributes ~ctx) constr.cd_attributes
+    (location ~ctx) constr.cd_loc
 
-let label_declaration ~config ppf (lbl : Typedtree.label_declaration) =
+let label_declaration ~ctx ppf (lbl : Typedtree.label_declaration) =
   Fmt.pf ppf "label %a %a id:%a%a%a"
     mutable_flag lbl.ld_mutable
     atomic_flag lbl.ld_atomic
-    ident lbl.ld_id
-    (attributes ~config) lbl.ld_attributes
-    (location ~config) lbl.ld_loc
+    (ident ~ctx IdentValue) lbl.ld_id
+    (attributes ~ctx) lbl.ld_attributes
+    (location ~ctx) lbl.ld_loc
 
-let type_declaration ~config ppf (ty : Typedtree.type_declaration) =
+let type_declaration ~ctx ppf (ty : Typedtree.type_declaration) =
   Fmt.pf ppf "type_declaration %s %a id:%a%a%a"
     ( match ty.typ_kind with
       | Ttype_abstract -> "abstract"
@@ -565,14 +579,14 @@ let type_declaration ~config ppf (ty : Typedtree.type_declaration) =
       | Ttype_open -> "open"
     )
     private_flag ty.typ_private
-    ident ty.typ_id
-    (attributes ~config) ty.typ_attributes
-    (location ~config) ty.typ_loc ;
+    (ident ~ctx IdentType) ty.typ_id
+    (attributes ~ctx) ty.typ_attributes
+    (location ~ctx) ty.typ_loc ;
   match ty.typ_kind with
   | Ttype_variant constrs ->
-      subexec' (constructor_declaration ~config)  ppf constrs
+      subexec' (constructor_declaration ~ctx)  ppf constrs
   | Ttype_record lbls ->
-      subexec' (label_declaration ~config) ppf lbls
+      subexec' (label_declaration ~ctx) ppf lbls
   | Ttype_abstract
   | Ttype_open ->
       ()
@@ -593,29 +607,32 @@ let rec module_expr_kind (mod_ : Typedtree.module_expr) =
       "Tmod_constraint"
   | Tmod_unpack _ ->
       "Tmod_unpack"
-and module_expr' ~config ppf (mod_ : Typedtree.module_expr) =
+and module_expr' ~ctx ppf (mod_ : Typedtree.module_expr) =
   match mod_.mod_desc with
   | Tmod_ident (p, lid) ->
       Fmt.pf ppf " path:%a id:%a"
-        path p
+        (path ~ctx IdentModule) p
         longident lid.txt ;
       []
   | Tmod_structure str ->
-      printables (structure_item ~config) str.str_items
+      let env = Envaux.env_of_only_summary str.str_final_env in
+      let ctx = { ctx with context_env= env } in
+      printables (structure_item ~ctx) str.str_items
+  | Tmod_constraint (mod_, _, _, _) ->
+      printables (module_expr ~ctx) [mod_]
   | Tmod_functor _
   | Tmod_apply _
   | Tmod_apply_unit _
-  | Tmod_constraint _
   | Tmod_unpack _ ->
       (* TODO *)
       []
-and module_expr ~config ppf mod_ =
+and module_expr ~ctx ppf mod_ =
   Fmt.pf ppf "%a"
     Fmt.(styled (`Fg Color.module_expr) string) (module_expr_kind mod_) ;
-  let subs = module_expr' ~config ppf mod_ in
+  let subs = module_expr' ~ctx ppf mod_ in
   Fmt.pf ppf "%a%a"
-    (attributes ~config) mod_.mod_attributes
-    (location ~config) mod_.mod_loc ;
+    (attributes ~ctx) mod_.mod_attributes
+    (location ~ctx) mod_.mod_loc ;
   subexec ppf subs
 
 and structure_item_kind (str_item : Typedtree.structure_item) =
@@ -648,25 +665,25 @@ and structure_item_kind (str_item : Typedtree.structure_item) =
       "Tstr_class_type"
   | Tstr_include _ ->
       "Tstr_include"
-and structure_item' ~config ppf (str_item : Typedtree.structure_item) =
+and structure_item' ~ctx ppf (str_item : Typedtree.structure_item) =
   match str_item.str_desc with
   | Tstr_eval (expr, attrs) ->
       Fmt.pf ppf "%a"
-        (attributes ~config) attrs ;
-      printables (expression ~config) [expr]
+        (attributes ~ctx) attrs ;
+      printables (expression ~ctx) [expr]
   | Tstr_value (rec_, bdgs) ->
       Fmt.pf ppf " %a"
         rec_flag rec_ ;
-      printables (value_binding ~config) bdgs
+      printables (value_binding ~ctx) bdgs
   | Tstr_type (rec_, tys) ->
       Fmt.pf ppf " %a"
         rec_flag rec_ ;
-      printables (type_declaration ~config) tys
+      printables (type_declaration ~ctx) tys
   | Tstr_module mod_ ->
       Fmt.pf ppf "%a%a"
-        Fmt.(option @@ fun ppf -> pf ppf " id:%a" ident) mod_.mb_id
-        (attributes ~config) mod_.mb_attributes ;
-      printables (module_expr ~config) [mod_.mb_expr]
+        Fmt.(option @@ fun ppf -> pf ppf " id:%a" (ident ~ctx IdentModule)) mod_.mb_id
+        (attributes ~ctx) mod_.mb_attributes ;
+      printables (module_expr ~ctx) [mod_.mb_expr]
   | Tstr_attribute attr ->
       Fmt.pf ppf " %a"
         attribute attr ;
@@ -682,17 +699,25 @@ and structure_item' ~config ppf (str_item : Typedtree.structure_item) =
   | Tstr_include _ ->
       (* TODO *)
       []
-and structure_item ~config ppf str_item =
+and structure_item ~ctx ppf str_item =
   Fmt.pf ppf "%a"
     Fmt.(styled (`Fg Color.structure_item) string) (structure_item_kind str_item) ;
-  let subs = structure_item' ~config ppf str_item in
+  let subs = structure_item' ~ctx ppf str_item in
   Fmt.pf ppf "%a"
-    (location ~config) str_item.str_loc ;
+    (location ~ctx) str_item.str_loc ;
   subexec ppf subs
 
 let structure ~config ppf (str : Typedtree.structure) =
+  let env = Envaux.env_of_only_summary str.str_final_env in
+  let ctx =
+    { context_attributes= config.config_attributes;
+      context_locations= config.config_locations;
+      context_indices= config.config_indices;
+      context_env= env;
+    }
+  in
   let renderer = Fmt.style_renderer ppf in
   Fmt.set_style_renderer ppf `Ansi_tty ;
   Fmt.pf ppf "@[<v>%a@]"
-    (exec' (structure_item ~config)) str.str_items ;
+    (exec' (structure_item ~ctx)) str.str_items ;
   Fmt.set_style_renderer ppf renderer
