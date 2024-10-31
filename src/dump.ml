@@ -29,6 +29,8 @@ module Color = struct
     `Yellow
   let expression =
     `Blue
+  let module_expr =
+    `Magenta
   let structure_item =
     `Red
 end
@@ -575,7 +577,48 @@ let type_declaration ~config ppf (ty : Typedtree.type_declaration) =
   | Ttype_open ->
       ()
 
-let structure_item_kind (str_item : Typedtree.structure_item) =
+let rec module_expr_kind (mod_ : Typedtree.module_expr) =
+  match mod_.mod_desc with
+  | Tmod_ident _ ->
+      "Tmod_ident"
+  | Tmod_structure _ ->
+      "Tmod_structure"
+  | Tmod_functor _ ->
+      "Tmod_structure"
+  | Tmod_apply _ ->
+      "Tmod_apply"
+  | Tmod_apply_unit _ ->
+      "Tmod_apply_unit"
+  | Tmod_constraint _ ->
+      "Tmod_constraint"
+  | Tmod_unpack _ ->
+      "Tmod_unpack"
+and module_expr' ~config ppf (mod_ : Typedtree.module_expr) =
+  match mod_.mod_desc with
+  | Tmod_ident (p, lid) ->
+      Fmt.pf ppf " path:%a id:%a"
+        path p
+        longident lid.txt ;
+      []
+  | Tmod_structure str ->
+      printables (structure_item ~config) str.str_items
+  | Tmod_functor _
+  | Tmod_apply _
+  | Tmod_apply_unit _
+  | Tmod_constraint _
+  | Tmod_unpack _ ->
+      (* TODO *)
+      []
+and module_expr ~config ppf mod_ =
+  Fmt.pf ppf "%a"
+    Fmt.(styled (`Fg Color.module_expr) string) (module_expr_kind mod_) ;
+  let subs = module_expr' ~config ppf mod_ in
+  Fmt.pf ppf "%a%a"
+    (attributes ~config) mod_.mod_attributes
+    (location ~config) mod_.mod_loc ;
+  subexec ppf subs
+
+and structure_item_kind (str_item : Typedtree.structure_item) =
   match str_item.str_desc with
   | Tstr_value _ ->
       "Tstr_value"
@@ -605,9 +648,11 @@ let structure_item_kind (str_item : Typedtree.structure_item) =
       "Tstr_class_type"
   | Tstr_include _ ->
       "Tstr_include"
-let structure_item ~config ppf (str_item : Typedtree.structure_item) =
+and structure_item' ~config ppf (str_item : Typedtree.structure_item) =
   match str_item.str_desc with
-  | Tstr_eval (expr, _) ->
+  | Tstr_eval (expr, attrs) ->
+      Fmt.pf ppf "%a"
+        (attributes ~config) attrs ;
       printables (expression ~config) [expr]
   | Tstr_value (rec_, bdgs) ->
       Fmt.pf ppf " %a"
@@ -617,6 +662,11 @@ let structure_item ~config ppf (str_item : Typedtree.structure_item) =
       Fmt.pf ppf " %a"
         rec_flag rec_ ;
       printables (type_declaration ~config) tys
+  | Tstr_module mod_ ->
+      Fmt.pf ppf "%a%a"
+        Fmt.(option @@ fun ppf -> pf ppf " id:%a" ident) mod_.mb_id
+        (attributes ~config) mod_.mb_attributes ;
+      printables (module_expr ~config) [mod_.mb_expr]
   | Tstr_attribute attr ->
       Fmt.pf ppf " %a"
         attribute attr ;
@@ -624,7 +674,6 @@ let structure_item ~config ppf (str_item : Typedtree.structure_item) =
   | Tstr_primitive _
   | Tstr_typext _
   | Tstr_exception _
-  | Tstr_module _
   | Tstr_recmodule _
   | Tstr_modtype _
   | Tstr_open _
@@ -633,12 +682,11 @@ let structure_item ~config ppf (str_item : Typedtree.structure_item) =
   | Tstr_include _ ->
       (* TODO *)
       []
-let structure_item ~config ppf str_item =
+and structure_item ~config ppf str_item =
   Fmt.pf ppf "%a"
     Fmt.(styled (`Fg Color.structure_item) string) (structure_item_kind str_item) ;
-  let subs = structure_item ~config ppf str_item in
-  Fmt.pf ppf "%a%a"
-    (attributes ~config) (match str_item.str_desc with Tstr_eval (_, attrs) -> attrs | _ -> [])
+  let subs = structure_item' ~config ppf str_item in
+  Fmt.pf ppf "%a"
     (location ~config) str_item.str_loc ;
   subexec ppf subs
 
