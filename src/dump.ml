@@ -215,6 +215,15 @@ let private_flag ppf (flag : Asttypes.private_flag) =
         "public"
     end
 
+let override_flag ppf (flag : Asttypes.override_flag) =
+  Fmt.string ppf
+    begin match flag with
+    | Override ->
+        "override"
+    | Fresh ->
+        "fresh"
+    end
+
 let arg_label ?(space = false) ppf (lbl : Asttypes.arg_label) =
   match lbl with
   | Nolabel ->
@@ -684,6 +693,10 @@ and structure_item' ~ctx ppf (str_item : Typedtree.structure_item) =
         Fmt.(option @@ fun ppf -> pf ppf " id:%a" (ident ~ctx IdentModule)) mod_.mb_id
         (attributes ~ctx) mod_.mb_attributes ;
       printables (module_expr ~ctx) [mod_.mb_expr]
+  | Tstr_open open_ ->
+      Fmt.pf ppf " %a"
+        override_flag open_.open_override ;
+      printables (module_expr ~ctx) [open_.open_expr]
   | Tstr_attribute attr ->
       Fmt.pf ppf " %a"
         attribute attr ;
@@ -693,7 +706,6 @@ and structure_item' ~ctx ppf (str_item : Typedtree.structure_item) =
   | Tstr_exception _
   | Tstr_recmodule _
   | Tstr_modtype _
-  | Tstr_open _
   | Tstr_class _
   | Tstr_class_type _
   | Tstr_include _ ->
